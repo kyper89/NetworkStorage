@@ -1,42 +1,39 @@
+import Handlers.FileHandler;
+import Handlers.NetworkHandler;
+
 import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.nio.ByteBuffer;
-import java.nio.channels.SocketChannel;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Scanner;
 
 public class ClientApp {
+    private static final int PORT = 9000;
+    private static final String HOSTNAME = "localhost";
+    private static final String DIRECTORY = "E:\\Network_Storage";
 
     public static void main(String[] args) {
-        new ClientApp().start();
+        new Thread(new SimpleClient()).start();
     }
 
-    public void start() {
-        System.out.println("Client started");
-        try {
-            SocketChannel channel = SocketChannel.open(new InetSocketAddress("localhost",9000));
-            ByteBuffer byteBuffer = ByteBuffer.allocate(256);
-            Scanner scanner = new Scanner(System.in);
-            while (true) {
+    static class SimpleClient implements Runnable {
 
-                System.out.println("Inter file name:");
-                Path path = Paths.get(scanner.next());
-                if (!Files.exists(path)) {
-                    System.out.println("File is not exists!");
-                    continue;
+        @Override
+        public void run() {
+            System.out.println("Client started");
+            NetworkHandler networkHandler = null;
+            try {
+                networkHandler = new NetworkHandler(HOSTNAME, PORT);
+                new FileHandler(Paths.get(DIRECTORY), networkHandler).listen();
+            } catch (IOException | InterruptedException e) {
+                e.printStackTrace();
+            } finally {
+                if (networkHandler != null) {
+                    try {
+                        networkHandler.close();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
                 }
-
-                channel.write(ByteBuffer.wrap(Files.readAllBytes(path)));
-
-                channel.read(byteBuffer);
-                String message = new String(byteBuffer.array());
-                System.out.println("New message: " + message);
-                byteBuffer.clear();
             }
-        } catch (IOException e) {
-            e.printStackTrace();
         }
     }
+
 }
