@@ -1,78 +1,66 @@
-import com.google.gson.Gson;
-import ru.kyper.FileData;
+import Codecs.MyJsonDecoder;
+import Handlers.ServerHandler;
 
-import java.io.FileOutputStream;
+import io.netty.bootstrap.ServerBootstrap;
+import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelInitializer;
+import io.netty.channel.ChannelOption;
+import io.netty.channel.WriteBufferWaterMark;
+import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.socket.SocketChannel;
+import io.netty.channel.socket.nio.NioServerSocketChannel;
+import io.netty.handler.codec.json.JsonObjectDecoder;
+import io.netty.handler.codec.string.StringDecoder;
+import io.netty.handler.codec.string.StringEncoder;
+
 import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.net.SocketException;
-import java.nio.ByteBuffer;
-import java.nio.channels.SelectionKey;
-import java.nio.channels.Selector;
-import java.nio.channels.ServerSocketChannel;
-import java.nio.channels.SocketChannel;
-import java.util.Iterator;
-import java.util.Set;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
 public class ServerApp {
     private static final int PORT = 9000;
     private static final String HOSTNAME = "localhost";
     private static final String DIRECTORY = "D:\\Network_Storage";
 
-    public static void main(String[] args) throws IOException {
+    public static void main(String[] args) throws InterruptedException, IOException {
+        Path dir = Paths.get(DIRECTORY);
+        if (!Files.exists(dir)) {
+            Files.createDirectory(dir);
+        }
         new ServerApp().start();
     }
 
-    public void start() throws IOException {
-        Selector selector = Selector.open();
-        ServerSocketChannel serverSocket = ServerSocketChannel.open();
-        serverSocket.socket().bind(new InetSocketAddress(HOSTNAME, PORT));
-        serverSocket.configureBlocking(false);
-        serverSocket.register(selector, SelectionKey.OP_ACCEPT);
-
-        System.out.println("Server started");
-
-        while (true) {
-            selector.select();
-            System.out.println("New selector event");
-            Set<SelectionKey> selectionKeys = selector.selectedKeys();
-            Iterator<SelectionKey> iterator = selectionKeys.iterator();
-            while (iterator.hasNext()){
-                SelectionKey selectionKey = iterator.next();
-                if (selectionKey.isAcceptable()) {
-                    System.out.println("New selector acceptable event");
-                    register(selector, serverSocket);
-                }
-                if (selectionKey.isReadable()) {
-                    System.out.println("New selector readable event");
-                    readMessage(selectionKey);
-                }
-                iterator.remove();
-            }
-        }
-    }
-
-    private void register(Selector selector, ServerSocketChannel serverSocket) throws IOException {
-        SocketChannel client = serverSocket.accept();
-        client.configureBlocking(false);
-        client.register(selector, SelectionKey.OP_READ);
-        System.out.println("New client is connected");
-    }
-
-    private void readMessage(SelectionKey key) throws IOException {
-        SocketChannel client = (SocketChannel) key.channel();
-        ByteBuffer byteBuffer = ByteBuffer.allocate(256);
+    public void start() throws InterruptedException {
+        NioEventLoopGroup bossGroup = new NioEventLoopGroup(1);
+        NioEventLoopGroup workerGroup = new NioEventLoopGroup();
         try {
-            client.read(byteBuffer);
-            String msg = new String(byteBuffer.array(), 0, byteBuffer.position() );
-            FileData fileData = new Gson().fromJson(msg, FileData.class);
-            System.out.println("New message: " + fileData.getFileName());
-            FileOutputStream out = new FileOutputStream(DIRECTORY + "\\" + fileData.getFileName());
-            out.write(fileData.getData());
-        } catch (SocketException e) {
-            client.close();
-            e.printStackTrace();
-        }
+            ServerBootstrap server = new ServerBootstrap();
+            server
+                    .group(bossGroup, workerGroup)
+                    .channel(NioServerSocketChannel.class)
+                    .childHandler(new ChannelInitializer<SocketChannel>() {
+                        @Override
+                        protected void initChannel(SocketChannel ch) {
+                            ch.pipeline().addLast(new JsonObjectDecoder(), new StringDecoder(), new StringEncoder(), new MyJsonDecoder(), new ServerHandler(DIRECTORY));
+                        }
+                    })
+                    .option(ChannelOption.SO_BACKLOG, 128)
+                    .childOption(ChannelOption.SO_KEEPALIVE, true)
+                    .childOption(
+                            ChannelOption.WRITE_BUFFER_WATER_MARK,
+                            new WriteBufferWaterMark(1024 * 1024 * 5, 1024 * 1024 * 10)
+                    );
 
+            ChannelFuture future = server.bind(HOSTNAME, PORT).sync();
+
+            System.out.println("Server started");
+
+            future.channel().closeFuture().sync();
+        } finally {
+            bossGroup.shutdownGracefully();
+            workerGroup.shutdownGracefully();
+        }
     }
 
 }
